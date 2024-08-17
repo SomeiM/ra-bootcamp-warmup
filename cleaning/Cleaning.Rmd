@@ -1,0 +1,156 @@
+---
+title: "RA Bootcamp Pre Assignment"
+output: html_notebook
+---
+
+This file cleans the raw data and create master dataset for analysis.
+```{r}
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(stringr)
+```
+
+
+# (a) Semester data
+First, set working directory and read the raw data files
+```{r}
+setwd("C:/Users/somei/OneDrive - London School of Economics/Year 3/RA Bootcamp/事前課題/RawData")
+
+sem1 <- read.csv("semester_dummy/semester_data_1.csv", skip = 1, header = TRUE)
+sem2 <- read.csv("semester_dummy/semester_data_2.csv")
+```
+Combine the datasets
+```{r}
+colnames(sem2) <- colnames(sem1) # Change the column names of sem2 to those of sem1
+sem <- rbind(sem1, sem2) # Combine two datasets
+sem$Y <- NULL # Delete "Y" column 
+```
+
+
+Identify and create a row of years in which universities switched to semseter system. 
+```{r}
+sem <- sem %>%
+  group_by(unitid) %>%
+  mutate(
+    sem_yr = if_else(all(semester == 1) | all(semester == 0), NA_integer_, min(year[semester == 1]))
+  ) %>%
+  ungroup()
+```
+
+Create a dummy variable indicating after the introduction of semseter system.
+```{r}
+sem <- sem %>%
+  mutate(sem_dummy = ifelse(year >= sem_yr, 1, 0))
+```
+
+
+# (b) Gradrate data (outcome)
+Read datasets and concatenate them. 
+```{r}
+# Initialize an empty data frame
+gradrate <- data.frame()
+
+# List all CSV files in the folder
+folder_path <- "C:/Users/somei/OneDrive - London School of Economics/Year 3/RA Bootcamp/事前課題/RawData/outcome"
+files <- list.files(path = folder_path, pattern = "\\.xlsx$", full.names = TRUE)
+
+# Loop through each file and read it
+for (file in files) {
+  temp_data <- read_excel(file)
+  gradrate <- rbind(gradrate, temp_data)
+}
+
+# Sort the combined data by unitid and year
+gradrate <- gradrate %>%
+  arrange(unitid, year)
+```
+
+Multiply women's graduation rate by 0.01. 
+```{r}
+gradrate$women_gradrate_4yr <- 0.01*(gradrate$women_gradrate_4yr)
+```
+
+Calculate men's and total graduation rates and create new columns. 
+```{r}
+# Change data type to numeric
+gradrate$m_4yrgrads <- as.numeric(gradrate$m_4yrgrads)
+gradrate$totcohortsize <- as.numeric(gradrate$totcohortsize)
+
+# Calculate graduation rate for male and total 
+gradrate$men_gradrate_4yr <- (gradrate$m_4yrgrads)/(gradrate$m_cohortsize)
+gradrate$total_gradrate_4yr <- (gradrate$tot4yrgrads)/(gradrate$totcohortsize)
+```
+
+Round up the values in the new columns to 3 significant figures 
+```{r}
+gradrate$men_gradrate_4yr <- signif(gradrate$men_gradrate_4yr, 3)
+gradrate$total_gradrate_4yr <- signif(gradrate$total_gradrate_4yr, 3) 
+```
+
+Drop observations after 2010
+```{r}
+gradrate <- subset(gradrate, year <= 2010)
+```
+
+
+# (c) Covariates data
+Read the raw data 
+```{r}
+setwd("C:/Users/somei/OneDrive - London School of Economics/Year 3/RA Bootcamp/事前課題/RawData")
+cov <- read_excel("covariates/covariates.xlsx")
+```
+Rename column name 
+```{r}
+cov <- cov %>% rename(unitid = university_id)
+```
+
+Remove 'aaaa' from 'unitid' column
+```{r}
+cov$unitid <- str_replace_all(cov$unitid, "aaaa", "")
+```
+
+Change the data structure to wide
+```{r}
+cov <- cov %>% 
+  pivot_wider(names_from = category, values_from = value)
+```
+
+Keep observations between 1991 and 2010 (to match other datasets)
+```{r}
+cov <- subset(cov, year >= 1991 & year <= 2010)
+```
+
+Identify unit IDs that exist in gradrate dataset and keep only those in cov dataset. 
+```{r}
+unique_ids <- gradrate %>% distinct(unitid)
+
+cov <- cov %>% filter(unitid %in% unique_ids$unitid)
+
+
+```
+
+
+# (d) Construct master data
+Merge all the datasets based on unitid and year
+```{r}
+cov$unitid <- as.numeric(cov$unitid)
+cov$year <- as.numeric(cov$year)
+master_data <-  sem %>% left_join(gradrate, by = c("unitid", "year"))
+master_data <- master_data %>% left_join(cov, by = c("unitid", "year"))
+```
+
+Save the datasets
+```{r}
+int_dir = "C:/Users/somei/OneDrive - London School of Economics/Year 3/RA Bootcamp/事前課題/IntermediateData"
+cov_path <- file.path(int_dir, "clean_covariates.csv")
+outcome_path <- file.path(int_dir, "clean_outcome.csv")
+sem_path <- file.path(int_dir, "clean_semester_dummy.csv")
+master_path <- file.path(int_dir, "master.csv")
+write.csv(cov, file = cov_path, row.names = FALSE)
+write.csv(gradrate, file = outcome_path, row.names = FALSE)
+write.csv(sem, file = sem_path, row.names = FALSE)
+write.csv(master_data, file = master_path, row.names = FALSE)
+```
+
+

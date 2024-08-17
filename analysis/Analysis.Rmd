@@ -1,0 +1,166 @@
+---
+title: "RA Bootcamp Pre Training (Analysis)"
+output: html_notebook
+---
+
+In this file, I calculate descriptive statistics, plot some figures and analyse the data. 
+
+Load libraries
+```{r}
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(stats)
+options(digits = 2)
+options(scipen = 999)
+```
+
+
+# (a) Descriptive statistics
+Read the master dataset. 
+```{r}
+setwd("C:/Users/somei/OneDrive - London School of Economics/Year 3/RA Bootcamp/事前課題/IntermediateData")
+
+df <- read.csv("master.csv")
+```
+Check the number of NA counts in each column 
+```{r}
+na_count <- sapply(df, function(x) sum(is.na(x)))
+
+na_count
+```
+
+Create 'switcher' dummy
+```{r}
+df <- df %>%
+  group_by(unitid) %>%
+  mutate(
+    # Check if the 'semester' variable is constant for the entire sample period
+    never_switcher = ifelse(all(semester == semester[1], na.rm = TRUE), 1, 0),
+    # Create the switcher variable based on the new definition
+    switcher = ifelse(never_switcher == 1, 0, 1)
+  ) %>%
+  ungroup() %>%
+  select(-never_switcher)  # Remove the temporary column if not needed
+```
+
+Calculate summary statistics for whole sample, never-switchers, and switchers.
+```{r}
+vars <- c("semester", "total_gradrate_4yr", "women_gradrate_4yr", "men_gradrate_4yr", "instatetuition", "costs", "faculty", "totcohortsize")
+summary_all <- df %>%
+  select(all_of(vars)) %>%
+  summarise(across(everything(), list(mean = ~mean(.x, na.rm = TRUE), sd = ~sd(.x, na.rm = TRUE))), n=n())
+
+summary_never <- df %>%
+  filter(switcher == 0) %>%
+  select(all_of(vars)) %>%
+  summarise(across(everything(), list(mean = ~mean(.x, na.rm = TRUE), sd = ~sd(.x, na.rm = TRUE))), n=n())
+
+summary_switcher <- df %>%
+  filter(switcher == 1) %>%
+  select(all_of(vars)) %>%
+  summarise(across(everything(), list(mean = ~mean(.x, na.rm = TRUE), sd = ~sd(.x, na.rm = TRUE))), n=n())
+
+# Combine the summaries into one data frame
+combined_summary <- bind_rows(
+  summary_all %>% mutate(Group = "All"),
+  summary_never %>% mutate(Group = "Never-Switchers"),
+  summary_switcher %>% mutate(Group = "Switchers")
+) %>%
+  pivot_longer(-Group, names_to = "Variable", values_to = "Statistic") %>%
+  pivot_wider(names_from = Group, values_from = Statistic)
+
+View(combined_summary)
+```
+
+Create LaTeX table
+```{r}
+combined_summary %>%
+  select(Variable, All, `Never-Switchers`, Switchers) %>%
+  kable("latex", booktabs = TRUE, caption = "Summary Statistics", col.names = c("Variable", "All", "Never-Switchers", "Switchers")) %>%
+  kable_styling(latex_options = "hold_position") %>%
+  add_header_above(c(" " = 1, "Mean (SD)" = 3)) %>%
+  save_kable("summary_stats.tex")
+```
+
+Calculate and plot the graduation rate over time
+```{r}
+# Calculate average graduation rate for eahc year 
+gradrate_avg <- df %>%
+  group_by(year) %>%
+  summarise(avg_gradrate = mean(total_gradrate_4yr, na.rm = TRUE))
+
+ggplot(gradrate_avg, aes(x = year, y = avg_gradrate)) +
+  geom_line() +
+  geom_point() +
+  ylim(0.25, 0.45) + 
+  labs(title = "Average Four-Year Graduation Rate",
+       x = "Year",
+       y = "Four-Year Graduation Rate") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black"))
+```
+
+Do the same for fractions of schools on semester
+```{r}
+# Calculate average graduation rate for eahc year 
+sem_avg <- df %>%
+  group_by(year) %>%
+  summarise(avg_sem = mean(semester, na.rm = TRUE))
+
+ggplot(sem_avg, aes(x = year, y = avg_sem)) +
+  geom_line() +
+  geom_point() +
+  ylim(0.8, 1) + 
+  labs(title = "Share of Schools on Semester",
+       x = "Year",
+       y = "Share of Semester Colleges") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black"))
+```
+
+Finally, define a function to generate scatter plot. 
+```{r}
+plot_scatter <- function(data, x_var) {
+  x_var_sym <- rlang::sym(x_var)
+  p <- ggplot(data, aes(x = !!x_var_sym, y = total_gradrate_4yr)) +
+    geom_point(size = 0.5) +
+    labs(title = paste( x_var, "vs Graduation Rate"),
+         x = x_var,
+         y = "Graduation Rate") +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black"))
+  
+  print(p)
+}
+```
+
+Define new variables
+```{r}
+df$female_ratio <- (df$w_cohortsize)/(df$totcohortsize)
+df$white_ratio <- (df$white_cohortsize)/(df$totcohortsize)
+```
+
+
+Plot 
+```{r}
+var_list <- c("female_ratio", "white_ratio", "instatetuition")
+
+for (var in var_list) {
+  plot_scatter(data = df, x_var = var)
+}
+```
+
+# (b) Regression analysis
+Estimate the following regression model using OLS
+\[Y_{st} = \beta_{0} + \beta_{1} \text{After}_{st} + \varepsilon_{st}\]
+```{r}
+model <- lm(total_gradrate_4yr ~ sem_dummy, data = df)
+
+# Display the summary of the model
+summary(model)
+```
+
